@@ -1,0 +1,14 @@
+{
+    "terminal.integrated.env.osx": {
+        "PATH": "/Users/lbasek/.platformio/penv/bin:/Users/lbasek/.platformio/penv:/Users/lbasek/.fastlane/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin:/usr/local/share/dotnet:~/.dotnet/tools:/Library/Frameworks/Mono.framework/Versions/Current/Commands:/Library/Frameworks/Python.framework/Versions/3.5/bin:/Library/Frameworks/Python.framework/Versions/3.6/bin:/Users/lbasek/.rvm/bin:/Users/lbasek/Library/Android/sdk/platform-tools/:/Library/Frameworks/Mono.framework/Versions/Current/bin/:/Users/lbasek/flutter/bin:$HOMELibrary/Android/sdk/platform-tools",
+        "PLATFORMIO_CALLER": "vscode"
+    },
+    "files.associations": {
+        "string": "cpp",
+        "array": "cpp",
+        "deque": "cpp",
+        "unordered_map": "cpp",
+        "vector": "cpp",
+        "initializer_list": "cpp"
+    }
+}
