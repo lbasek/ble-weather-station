@@ -20,5 +20,5 @@ TODO
   - Adafruit BME280 -v1.0.9 - https://github.com/adafruit/Adafruit_BME280_Library?utm_source=platformio&utm_medium=piohome
   - Oled Driver for SSD1306 display - v4.0.0 - https://github.com/ThingPulse/esp8266-oled-ssd1306?utm_source=platformio&utm_medium=piohome
   
-  ## Client - Android
-  TODO
+## Client - Android
+TODO
