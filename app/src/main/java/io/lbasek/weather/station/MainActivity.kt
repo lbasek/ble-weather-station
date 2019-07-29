@@ -1,23 +1,27 @@
 package io.lbasek.weather.station
 
-import android.bluetooth.*
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanSettings
-import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
-import android.os.Handler
-import android.util.Log
 import android.widget.Toast
+import androidx.annotation.ColorInt
 import androidx.appcompat.app.AppCompatActivity
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.interfaces.datasets.ILineDataSet
+import com.jakewharton.rx.ReplayingShare
+import com.polidea.rxandroidble2.RxBleClient
+import com.polidea.rxandroidble2.RxBleConnection
+import com.polidea.rxandroidble2.RxBleDevice
+import io.reactivex.Observable
+import io.reactivex.android.schedulers.AndroidSchedulers
+import io.reactivex.disposables.CompositeDisposable
+import io.reactivex.disposables.Disposable
+import io.reactivex.schedulers.Schedulers
+import io.reactivex.subjects.PublishSubject
 import kotlinx.android.synthetic.main.activity_main.*
+import timber.log.Timber
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
@@ -26,217 +30,159 @@ import java.util.*
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        const val TAG = "BLE_EXAMPLE"
-        const val SCAN_PERIOD = 10000
+        const val DEVICE_ADDRESS = "CC:50:E3:80:BD:A6"
 
-        val SENSOR_SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
         val TEMPERATURE_CHARACTERISTIC_UUID: UUID = UUID.fromString("00002a6e-0000-1000-8000-00805f9b34fb")
         val HUMIDITY_CHARACTERISTIC_UUID: UUID = UUID.fromString("00002a6f-0000-1000-8000-00805f9b34fb")
-        val SENSOR_DESCRIPTOR_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        val temperatureGraphColor = Color.parseColor("#173F5F")
+        val humidityGraphColor = Color.parseColor("#3CAEA3")
     }
 
-    private var temperatureCharacteristic: BluetoothGattCharacteristic? = null
-    private var humidityCharacteristic: BluetoothGattCharacteristic? = null
-    private var gatt: BluetoothGatt? = null
-    private var device: BluetoothDevice? = null
+    private val compositeDisposable = CompositeDisposable()
+
+    private var disposable: Disposable? = null
+
+    private lateinit var bleDevice: RxBleDevice
+
+    private lateinit var rxBleClient: RxBleClient
+
+    private lateinit var connectionObservable: Observable<RxBleConnection>
+
+    private val disconnectTriggerSubject = PublishSubject.create<Unit>()
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        createSet(chartTemperature, "Temperature", "#173F5F")
-        createSet(chartHumidity, "Humidity", "#3CAEA3")
+        createSet(chartTemperature, resources.getString(R.string.temperature), temperatureGraphColor)
+        createSet(chartHumidity, resources.getString(R.string.humidity), humidityGraphColor)
 
-        scan_button.setOnClickListener {
-            bluetoothAdapter?.bluetoothLeScanner?.startScan(
-                mutableListOf(
-                    ScanFilter.Builder()
-                        .setDeviceName("CC50E380BDA6")
-//                        .setDeviceAddress("CC:50:E3:80:BD:A6")
-                        .build()
-                ),
-                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build(),
-                scannerCallback
-            )
-            Handler().postDelayed({
-                stopScan()
-            }, SCAN_PERIOD.toLong())
-        }
-
-        switch_temp.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                enableNotification(temperatureCharacteristic)
-            } else {
-                disableNotification(temperatureCharacteristic)
-            }
-        }
-        switch_humidity.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                enableNotification(humidityCharacteristic)
-            } else {
-                disableNotification(humidityCharacteristic)
-            }
-        }
-
-        connect_button.setOnClickListener {
-            if (connect_button.text.toString() == "Disconnect") {
-                gatt?.disconnect()
-                connect_button.text = "Connect"
-                connect_button.isEnabled = false
-                switch_humidity.isChecked = false
-                switch_temp.isChecked = false
-            } else {
-                device?.connectGatt(applicationContext, false, gattCallback)
-            }
-
-        }
+        rxBleClient = RxBleClient.create(this)
     }
 
-    private fun enableNotification(characteristic: BluetoothGattCharacteristic?) {
-        characteristic?.getDescriptor(SENSOR_DESCRIPTOR_UUID)?.run {
-            value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            gatt?.writeDescriptor(this)
-            gatt?.setCharacteristicNotification(characteristic, true)
-        }
-    }
+    override fun onResume() {
+        super.onResume()
 
-    private fun disableNotification(characteristic: BluetoothGattCharacteristic?) {
-        characteristic?.getDescriptor(SENSOR_DESCRIPTOR_UUID)?.run {
-            value = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-            gatt?.writeDescriptor(this)
-            gatt?.setCharacteristicNotification(characteristic, false)
+        bleDevice = rxBleClient.getBleDevice(DEVICE_ADDRESS)
+        connectionObservable = prepareConnectionObservable()
+        status.text = getString(R.string.status_string_format).format(bleDevice.connectionState.name)
 
-        }
-    }
-
-    private val bluetoothAdapter: BluetoothAdapter? by lazy(LazyThreadSafetyMode.NONE) {
-        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bluetoothManager.adapter
-    }
-
-    private val scannerCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            Log.i("TAG", result?.device?.address + result?.scanRecord!!.bytes.toString())
-            if (result.device?.name == device_name.text.toString()) {
-                connect_button.isEnabled = true
-//                bluetoothAdapter?.bluetoothLeScanner?.stopScan(this)
-                Log.i(TAG, "BLE Device: " + result.device?.run { "$name $address" })
-                Toast.makeText(this@MainActivity, "Device Found", Toast.LENGTH_SHORT).show()
-                this@MainActivity.device = result.device
-            }
-        }
-
-        override fun onScanFailed(errorCode: Int) {
-            Toast.makeText(
-                this@MainActivity, when (errorCode) {
-                    SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
-                    SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "Application registration failed"
-                    SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature not supported"
-                    SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
-                    else -> "Unknown error"
-                }, Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    private fun stopScan() {
-        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scannerCallback)
-    }
-
-    private val gattCallback = object : BluetoothGattCallback() {
-
-        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    Log.e(TAG, "STATE_CONNECTED")
-                    connect_button.text = "Disconnect"
-                    gatt?.discoverServices()
+        bleDevice.observeConnectionStateChanges()
+            .observeOn(AndroidSchedulers.mainThread())
+            .doOnNext {
+                if (it == RxBleConnection.RxBleConnectionState.CONNECTED) {
+                    connect_button.text = resources.getString(R.string.disconnect)
+                } else {
+                    connect_button.text = resources.getString(R.string.connect)
                 }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.e(TAG, "STATE_DISCONNECTED")
-                    this@MainActivity.gatt?.close()
-                    this@MainActivity.gatt = null
-                }
-                else -> Log.e(TAG, "STATE UNKNOWN")
-            }
-        }
 
-        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            Log.i(TAG, "onServicesDiscovered")
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                this@MainActivity.gatt = gatt
-                for (service in gatt!!.services) {
-                    if (service.uuid == SENSOR_SERVICE_UUID) {
-                        temperatureCharacteristic = service.getCharacteristic(TEMPERATURE_CHARACTERISTIC_UUID)
-                        humidityCharacteristic = service.getCharacteristic(HUMIDITY_CHARACTERISTIC_UUID)
+                status.text = getString(R.string.status_string_format).format(bleDevice.connectionState.name)
+            }
+            .subscribe({}, { Timber.e(it) })
+            .let { compositeDisposable.add(it) }
+
+        rxBleClient.observeStateChanges()
+            .subscribeOn(Schedulers.io())
+            .startWith(rxBleClient.state)
+            .distinctUntilChanged()
+            .observeOn(AndroidSchedulers.mainThread())
+            .doOnNext {
+                ble_status.text = """BLE Environment Status: ${it.name}"""
+                when (it) {
+                    RxBleClient.State.READY -> {
+                        connect_button.isEnabled = true
+                    }
+                    RxBleClient.State.BLUETOOTH_NOT_ENABLED -> {
+                        connect_button.isEnabled = false
+                    }
+                    RxBleClient.State.BLUETOOTH_NOT_AVAILABLE -> {
+                        connect_button.isEnabled = false
+                    }
+                    RxBleClient.State.LOCATION_SERVICES_NOT_ENABLED -> {
+                        connect_button.isEnabled = false
+                    }
+                    RxBleClient.State.LOCATION_PERMISSION_NOT_GRANTED -> {
+                        connect_button.isEnabled = false
                     }
                 }
             }
-        }
+            .subscribe({}, { Timber.e(it) })
+            .let { compositeDisposable.add(it) }
 
-        override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: BluetoothGattDescriptor?, status: Int) {
-            Log.d(TAG, "onDescriptorWrite")
-        }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?) {
-            Log.d(TAG, "onCharacteristicChanged")
-            val timestamp = System.currentTimeMillis() / 1000
-            when (characteristic?.uuid) {
-                TEMPERATURE_CHARACTERISTIC_UUID -> {
-                    val temperature = ByteBuffer.wrap(characteristic.value).order(ByteOrder.LITTLE_ENDIAN).float
-                    Log.d(TAG, "Temperature: %.2f".format(temperature))
-                    temperature_text.text = "%.2f".format(temperature)
-                    addEntry(chartTemperature, timestamp, temperature)
-                }
-                HUMIDITY_CHARACTERISTIC_UUID -> {
-                    val humidity = ByteBuffer.wrap(characteristic.value).order(ByteOrder.LITTLE_ENDIAN).float
-                    Log.d(TAG, "Humidity: %.2f".format(humidity))
-                    humidity_text.text = "%.2f".format(humidity)
-                    addEntry(chartHumidity, timestamp, humidity)
-                }
+        connect_button.setOnClickListener {
+            if (bleDevice.connectionState == RxBleConnection.RxBleConnectionState.CONNECTED) {
+                triggerDisconnect()
+            } else {
+                disposable?.dispose()
+                disposable = connectionObservable
+                    .flatMap { it.setupNotification(TEMPERATURE_CHARACTERISTIC_UUID) }
+                    .flatMap { it }
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .map {
+                        val temperature = ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).float
+                        Timber.d("Temperature: %.2f".format(temperature))
+                        temperature_text.text = getString(R.string.temperature_string_format).format(temperature)
+                        addEntry(chartTemperature, temperature)
+                    }
+                    .flatMap { connectionObservable }
+                    .flatMap { it.setupNotification(HUMIDITY_CHARACTERISTIC_UUID) }
+                    .flatMap { it }
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .map {
+                        val humidity = ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).float
+                        Timber.d("Humidity: %.2f".format(humidity))
+                        humidity_text.text = getString(R.string.humidity_string_format).format(humidity)
+                        addEntry(chartHumidity, humidity)
+                    }
+                    .subscribe({}, {
+                        Toast.makeText(applicationContext, it.localizedMessage, Toast.LENGTH_SHORT).show()
+                    })
             }
-
         }
-
     }
 
-    private fun addEntry(chart: LineChart, timestamp: Long, value: Float) {
+    private fun triggerDisconnect() = disconnectTriggerSubject.onNext(Unit)
 
+    private fun prepareConnectionObservable(): Observable<RxBleConnection> = bleDevice
+        .establishConnection(false)
+        .takeUntil(disconnectTriggerSubject)
+        .subscribeOn(Schedulers.io())
+        .observeOn(AndroidSchedulers.mainThread())
+        .compose(ReplayingShare.instance())
+        .doOnError { Toast.makeText(applicationContext, it.localizedMessage, Toast.LENGTH_SHORT).show() }
+
+    private fun addEntry(chart: LineChart, value: Float) {
         val data = chart.data
-        val set: ILineDataSet? = data!!.getDataSetByIndex(0)
-        data.addEntry(Entry(set!!.entryCount.toFloat(), value), 0)
+        val set: ILineDataSet = data.getDataSetByIndex(0)
+        data.addEntry(Entry(set.entryCount.toFloat(), value), 0)
         data.notifyDataChanged()
-
-        // let the chart know it's data has changed
         chart.notifyDataSetChanged()
-
-        // limit the number of visible entries
         chart.setVisibleXRangeMaximum(120f)
-        // chart.setVisibleYRange(30, AxisDependency.LEFT);
-
-        // move to the latest entry
         chart.moveViewToX(set.entryCount.toFloat())
-
-        // this automatically refreshes the chart (calls invalidate())
-        // chart.moveViewTo(data.getXValCount()-7, 55f,
-        // AxisDependency.LEFT);
     }
 
-    private fun createSet(chart: LineChart, title: String, fillColorHex: String) {
+    override fun onPause() {
+        super.onPause()
+        compositeDisposable.clear()
+    }
 
+    private fun createSet(chart: LineChart, title: String, @ColorInt color: Int) {
         chart.setBackgroundColor(Color.WHITE)
         chart.setTouchEnabled(true)
         chart.isDragEnabled = true
         chart.setScaleEnabled(true)
         chart.description.isEnabled = false
+        chart.xAxis.valueFormatter = CustomValueFormatter()
 
         val set = LineDataSet(null, title)
-        set.color = Color.parseColor(fillColorHex)
-        set.lineWidth = 2f
+        set.color = color
+        set.lineWidth = 4f
         set.setDrawCircles(false)
-        set.fillAlpha = 200
+        set.fillAlpha = 50
         set.mode = LineDataSet.Mode.CUBIC_BEZIER
-        set.fillColor = Color.parseColor(fillColorHex)
+        set.fillColor = color
         set.valueTextSize = 9f
         set.setDrawValues(false)
         set.setDrawCircleHole(false)
