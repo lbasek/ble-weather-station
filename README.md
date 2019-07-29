@@ -9,7 +9,7 @@
   -https://www.makershop.de/sensoren/temperatur/bme280-5-volt/
 
 ## Schematic
-TODO
+<img src="https://github.com/lbasek/ble-weather-station/blob/master/image.jpg" width="512">
 
 ## Firmware
 - Environment
