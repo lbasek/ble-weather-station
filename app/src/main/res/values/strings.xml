@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">ble-weather-station</string>
+    <string name="connect">Connect</string>
+    <string name="temperature">Temperature</string>
+    <string name="humidity">Humidity</string>
+    <string name="no_data">-</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="status_string_format">Status: %1$s</string>
+    <string name="temperature_string_format">%1$.2f °C</string>
+    <string name="humidity_string_format">%1$.2f \%%</string>
 </resources>
