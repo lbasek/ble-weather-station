@@ -21,4 +21,5 @@
   - Oled Driver for SSD1306 display - v4.0.0 - https://github.com/ThingPulse/esp8266-oled-ssd1306?utm_source=platformio&utm_medium=piohome
   
 ## Client - Android
-TODO
+<img src="https://github.com/lbasek/ble-weather-station/blob/master/app_image.jpg" height="512">
+
